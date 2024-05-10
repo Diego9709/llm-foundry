@@ -14,26 +14,28 @@ from transformers import PreTrainedModel, Cache, DynamicCache, PreTrainedTokeniz
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa, \
     _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-
+from llmfoundry.models.layers.ffn import resolve_ffn_hidden_size
 from llmfoundry.models.layers import NORM_CLASS_REGISTRY
 from llmfoundry.models.layers.blocks import LlamaBlock
 from llmfoundry.models.llama.configuration_llama import LlamaConfig
 from llmfoundry.models.utils import MODEL_INIT_REGISTRY
-from llmfoundry.data.denoising import build_text_denoising_dataloader
+from transformers.models.llama.modeling_llama import  LlamaDecoderLayer, LlamaRMSNorm
 
 class LlamaPreTrainedModel(PreTrainedModel):
     config_class = LlamaConfig
     base_model_prefix = 'model'
     supports_gradient_checkpointing = True
     _no_split_modules = ['LlamaBlock']
-    _skip_keys_device_placement = "past_key_values"
+    _skip_keys_device_placement = "past_key_valuesa"
     _supports_flash_attn_2 = True
     _supports_sdpa = True
     _supports_cache_class = True
+    
 
 
 class LlamaModel(LlamaPreTrainedModel):
     def __init__(self, config: LlamaConfig):
+         
         super().__init__(config)
         norm_type = config.normal_type
 
@@ -41,16 +43,19 @@ class LlamaModel(LlamaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-
+        
+        config.intermediate_size = resolve_ffn_hidden_size(config.hidden_size, config.expansion_ratio, config.intermediate_size)
+        
         self.layers = nn.ModuleList(
             [LlamaBlock(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
 
         self._use_sdpa = config._attn_implementation == "sdpa"
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
-        self.norm = NORM_CLASS_REGISTRY[norm_type](config.hidden_size)
+        self.norm = NORM_CLASS_REGISTRY[norm_type.lower()](config.hidden_size)
 
         self.gradient_checkpointing = False
+    
 
         self.post_init()
 
@@ -146,6 +151,7 @@ class LlamaModel(LlamaPreTrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
+        i = 0
         for decoder_layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -178,25 +184,27 @@ class LlamaModel(LlamaPreTrainedModel):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
 
-            hidden_states = self.norm(hidden_states)
+        hidden_states = self.norm(hidden_states)
 
-            if output_hidden_states:
-                all_hidden_states += (hidden_states,)
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
 
-            past_key_value = None
+        past_key_value = None
 
-            if use_cache:
-                past_key_value = next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
+        if use_cache:
+            past_key_value = (
+                next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
+                )
 
-            if not return_dict:
-                return tuple(v for v in [hidden_states, past_key_value, all_hidden_states, all_self_attns]
-                             if v is not None)
-            return BaseModelOutputWithPast(
-                last_hidden_state=hidden_states,
-                past_key_values=past_key_value,
-                hidden_states=all_hidden_states,
-                attentions=all_self_attns,
-            )
+        if not return_dict:
+            return tuple(v for v in [hidden_states, past_key_value, all_hidden_states, all_self_attns] if v is not None)
+        
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=past_key_value,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+        )
 
     def _init_weights(self, module):
         init_fn_name = self.config.init_config['name']
@@ -310,9 +318,8 @@ class ComposerLlamaCasualLM(HuggingFaceModel):
     ):
         resolved_om_model_config = OmegaConf.to_container(om_model_config,
                                                           resolve=True)
-
         hf_config = LlamaConfig.from_dict(resolved_om_model_config)
-        model = LlamaModel(hf_config)
+        model = LlamaForCausaLlm(hf_config)
 
         use_train_metrics = om_model_config.get('use_train_metrics', True)
         train_metrics = [LanguageCrossEntropy(),
@@ -343,7 +350,34 @@ class ComposerLlamaCasualLM(HuggingFaceModel):
         loss_fn_config = om_model_config.get('loss_fn', 'fused_crossentropy')
 
         assert loss_fn_config in ['fused_crossentropy', 'torch_crossentropy']
+        
+        if loss_fn_config == 'fused_crossentropy':
+            try:
+                from flash_attn.losses.cross_entropy import \
+                    CrossEntropyLoss as FusedCrossEntropyLoss
 
+                self.loss_fn = FusedCrossEntropyLoss(ignore_index=-100)
+            except:
+                raise ValueError(
+                    'Fused Cross Entropy is not installed. Either (1) have a CUDA-compatible GPU '
+                    +
+                    'and `pip install .[gpu]` if installing from source or `pip install xentropy-cuda-lib@git+https://github.com/HazyResearch/flash-attention.git@v1.0.3#subdirectory=csrc/xentropy` '
+                    +
+                    'if installing from pypi, or (2) set your config model.loss_fn=torch_crossentropy.'
+                )
+        elif loss_fn_config == 'torch_crossentropy':
+            self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        else:
+            raise ValueError(
+                f'Specified loss_fn={self.loss_fn} not recognized. `loss_fn` must be one of [`fused_crossentropy`, `torch_crossentropy`].'
+            )
+
+    def get_targets(self, batch: Mapping) -> torch.Tensor:
+        targets = torch.roll(batch['labels'], shifts=-1)
+        targets[:, -1] = -100
+        return targets
+    
+    
     def forward(self, batch: MutableMapping) -> CausalLMOutputWithPast:
         return self.model(
             input_ids=batch.get('input_ids', None),
@@ -367,7 +401,7 @@ class ComposerLlamaCasualLM(HuggingFaceModel):
 
         params_flops_per_token = 2 * params
         params_flops_per_seq = params_flops_per_token * msl
-        attn_flops_per_seq = (self.model.config.n_layers * 2 * 2 *
-                              (self.model.config.d_model * (msl ** 2)))
+        attn_flops_per_seq = (self.model.config.num_hidden_layers * 2 * 2 *
+                              (self.model.config.hidden_size * (msl ** 2)))
 
         return (params_flops_per_seq + attn_flops_per_seq) * 3 * bs

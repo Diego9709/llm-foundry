@@ -23,7 +23,7 @@ class LPLayerNorm(torch.nn.LayerNorm):
     def __init__(
         self,
         normalized_shape: Union[int, List[int], torch.Size],
-        eps: float = 1e-05,
+        eps: float = 1e-5,
         elementwise_affine: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
@@ -109,6 +109,23 @@ class LPRMSNorm(RMSNorm):
         with torch.autocast(enabled=False, device_type=x.device.type):
             return rms_norm(downcast_x, downcast_weight,
                             self.eps).to(dtype=x.dtype)
+            
+
+class LlamaRMSNorm(torch.nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        LlamaRMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
 
 
 NORM_CLASS_REGISTRY: Dict[str, Type[torch.nn.Module]] = {

@@ -10,7 +10,8 @@ _PACKAGE_NAME = 'llm-foundry'
 _PACKAGE_DIR = 'llmfoundry'
 _REPO_REAL_PATH = os.path.dirname(os.path.realpath(__file__))
 _PACKAGE_REAL_PATH = os.path.join(_REPO_REAL_PATH, _PACKAGE_DIR)
-
+print("*"*20)
+print(_PACKAGE_REAL_PATH)
 # Read the repo version
 # We can't use `.__version__` from the library since it's not installed yet
 with open(os.path.join(_PACKAGE_REAL_PATH, '__init__.py')) as f:

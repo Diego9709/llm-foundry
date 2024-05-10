@@ -5,6 +5,8 @@ from llmfoundry.models.hf import (ComposerHFCausalLM, ComposerHFPrefixLM,
                                   ComposerHFT5)
 from llmfoundry.models.mpt import (ComposerMPTCausalLM, MPTConfig,
                                    MPTForCausalLM, MPTModel, MPTPreTrainedModel)
+from llmfoundry.models.llama.configuration_llama import LlamaConfig
+from llmfoundry.models.llama.modeling_llama import LlamaModel, LlamaPreTrainedModel, LlamaForCausaLlm, ComposerLlamaCasualLM
 
 __all__ = [
     'ComposerHFCausalLM',
@@ -15,4 +17,9 @@ __all__ = [
     'MPTModel',
     'MPTForCausalLM',
     'ComposerMPTCausalLM',
+    'LlamaConfig',
+    'LlamaModel',
+    'LlamaPreTrainedModel',
+    'LlamaForCausaLlm',
+    'ComposerLlamaCasualLM'
 ]

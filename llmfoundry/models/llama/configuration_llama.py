@@ -1,9 +1,7 @@
-import warnings
-from typing import Dict, Union, Any, Optional
+from typing import Dict
 
 from transformers import PretrainedConfig
 
-from llmfoundry.models.layers.blocks import alaya_attn_config_defaults
 
 ffn_config_defaults: Dict = {
     'ffn_type': 'llamamlp',
@@ -27,12 +25,13 @@ class LlamaConfig(PretrainedConfig):
             self,
             vocab_size=32000,
             hidden_size=4096,
-            intermediate_size=11008,
+            expansion_ratio=4,
+            intermediate_size=None,
             num_hidden_layers=32,
             num_attention_heads=32,
             num_key_value_heads=None,
             hidden_act="silu",
-            normal_type='low_precision_layernorm',
+            normal_type='rmsnorm',
             max_position_embeddings=2048,
             initializer_range=0.02,
             rms_norm_eps=1e-6,
@@ -54,10 +53,11 @@ class LlamaConfig(PretrainedConfig):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
+        self.expansion_ratio = expansion_ratio
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
-
+        self.pretraining_tp=pretraining_tp
         # for backward compatibility
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads
@@ -74,7 +74,7 @@ class LlamaConfig(PretrainedConfig):
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
         self.init_config = init_config if init_config is not None else init_config_defaults
-
+        
         super().__init__(
             pad_token_id=pad_token_id,
             bos_token_id=bos_token_id,
@@ -82,6 +82,8 @@ class LlamaConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
+        
+        self._validate_config()
 
     def _rope_scaling_validation(self):
         """
@@ -105,4 +107,16 @@ class LlamaConfig(PretrainedConfig):
             raise ValueError(f"`rope_scaling`'s factor field must be a float > 1, got {rope_scaling_factor}")
 
     def _validate_config(self) -> None:
-        pass
+        pass        
+        
+        
+    @property
+    def _attn_implementation(self):
+        """
+        Return the attention implementation type.
+        - "eager" for the LlamaAttention implementation.
+        - "flash_attention_2" for the LlamaFlashAttention2 implementation.
+        - "sdpa" for the LlamaSdpaAttention implementation.
+    
+        """
+        return "eager"

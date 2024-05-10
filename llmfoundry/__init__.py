@@ -48,6 +48,7 @@ try:
     from llmfoundry.models.mpt import (ComposerMPTCausalLM, MPTConfig,
                                        MPTForCausalLM, MPTModel,
                                        MPTPreTrainedModel)
+    from llmfoundry.models import LlamaConfig, LlamaModel, LlamaPreTrainedModel, LlamaForCausaLlm, ComposerLlamaCasualLM
     from llmfoundry.tokenizers import TiktokenTokenizerWrapper
     if is_flash_v1_installed():
         transformers.utils.is_flash_attn_available = lambda: False
@@ -81,6 +82,11 @@ __all__ = [
     'ComposerHFPrefixLM',
     'ComposerHFT5',
     'COMPOSER_MODEL_REGISTRY',
+    'LlamaConfig',
+    'LlamaModel', 
+    'LlamaPreTrainedModel', 
+    'LlamaForCausaLlm', 
+    'ComposerLlamaCasualLM'
     'scaled_multihead_dot_product_attention',
     'flash_attn_fn',
     'triton_flash_attn_fn',
@@ -93,6 +99,7 @@ __all__ = [
     'optim',
     'utils',
     'TiktokenTokenizerWrapper',
+    
 ]
 
 __version__ = '0.4.0'

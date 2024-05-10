@@ -123,6 +123,7 @@ class StreamingTextDataset(StreamingDataset):
         if local is not None and (remote is None or (local == remote)):
             if os.path.isdir(local):
                 contents = set(os.listdir(local))
+                print(contents)
                 if split not in contents:
                     raise ValueError(
                         f'local directory {local} does not contain split {split}'

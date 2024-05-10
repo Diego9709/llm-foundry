@@ -19,11 +19,12 @@ from composer.profiler import (JSONTraceHandler, Profiler, TraceHandler,
                                cyclic_schedule)
 from composer.utils import dist, get_device, reproducibility
 from omegaconf import DictConfig, ListConfig
-from omegaconf import OmegaConf as om
+from omegaconf import OmegaConf
 from transformers import PreTrainedTokenizerBase
 
 from llmfoundry import (COMPOSER_MODEL_REGISTRY, ComposerHFCausalLM,
                         MPTForCausalLM)
+from llmfoundry import (LlamaModel, LlamaPreTrainedModel, LlamaForCausaLlm, ComposerLlamaCasualLM)
 from llmfoundry.callbacks import AsyncEval
 from llmfoundry.data.dataloader import build_dataloader
 from llmfoundry.utils.builders import (add_metrics_to_eval_loaders,
@@ -56,22 +57,22 @@ def validate_config(cfg: DictConfig):
         if loader.name == 'text':
             if cfg.model.name in ['hf_prefix_lm', 'hf_t5']:
                 raise ValueError(
-                    f'Model type "{cfg.model.name}" is not supported when using the "text " ' +\
+                    f'Model type "{cfg.model.name}" is not supported when using the "text " ' + \
                     f'dataloader. Please use the "text_denoising" dataloader to pre-train that model type.')
         elif loader.name == 'text_denoising':
             if cfg.model.name == 'hf_causal_lm':
                 raise ValueError(
-                    f'Model type "{cfg.model.name}" is not supported when using the "text_denoising" ' +\
+                    f'Model type "{cfg.model.name}" is not supported when using the "text_denoising" ' + \
                     f'dataloader. Please use the "text" dataloader to pre-train that model type.')
             if loader.mixture_of_denoisers.decoder_only_format and cfg.model.name == 'hf_t5':
                 warnings.warn(
-                    'Model type "hf_t5" requires `decoder_only_format` to be ``False``. ' +\
+                    'Model type "hf_t5" requires `decoder_only_format` to be ``False``. ' + \
                     'Overriding `decoder_only_format` from ``True`` to ``False``.')
                 loader.mixture_of_denoisers.decoder_only_format = False
             if (not loader.mixture_of_denoisers.decoder_only_format
-               ) and cfg.model.name == 'hf_prefix_lm':
+            ) and cfg.model.name == 'hf_prefix_lm':
                 warnings.warn(
-                    'Model type "hf_prefix_lm" requires `decoder_only_format` to be ``True``. ' +\
+                    'Model type "hf_prefix_lm" requires `decoder_only_format` to be ``True``. ' + \
                     'Overriding `decoder_only_format` from ``False`` to ``True``.')
                 loader.mixture_of_denoisers.decoder_only_format = True
 
@@ -145,7 +146,7 @@ def build_composer_peft_model(
     lora_cfg = LoraConfig(**lora_args)
 
     log.info('Building model from HuggingFace checkpoint...')
-    model = MPTForCausalLM.from_pretrained(pretrained_model_name_or_path,
+    model = LlamaForCausaLlm.from_pretrained(pretrained_model_name_or_path,
                                            trust_remote_code=True)
     log.info('Model built!')
 
@@ -184,7 +185,7 @@ def main(cfg: DictConfig) -> Trainer:
     validate_config(cfg)
 
     # Resolve all interpolation variables as early as possible
-    om.resolve(cfg)
+    OmegaConf.resolve(cfg)
 
     # Create copy of config for logging
     logged_cfg: DictConfig = copy.deepcopy(cfg)
@@ -247,16 +248,14 @@ def main(cfg: DictConfig) -> Trainer:
                                                        convert=True)
     eval_loader_config: Optional[Union[DictConfig, ListConfig]] = pop_config(
         cfg, 'eval_loader', must_exist=False, default_value=None)
-    icl_tasks_config: Optional[Union[ListConfig,
-                                     str]] = pop_config(cfg,
-                                                        'icl_tasks',
-                                                        must_exist=False,
-                                                        default_value=None)
-    eval_gauntlet_config: Optional[Union[DictConfig,
-                                         str]] = pop_config(cfg,
-                                                            'eval_gauntlet',
-                                                            must_exist=False,
-                                                            default_value=None)
+    icl_tasks_config: Optional[Union[ListConfig, str]] = pop_config(cfg,
+                                                                    'icl_tasks',
+                                                                    must_exist=False,
+                                                                    default_value=None)
+    eval_gauntlet_config: Optional[Union[DictConfig, str]] = pop_config(cfg,
+                                                                        'eval_gauntlet',
+                                                                        must_exist=False,
+                                                                        default_value=None)
     if eval_gauntlet_config is None:
         eval_gauntlet_config = pop_config(cfg,
                                           'model_gauntlet',
@@ -326,11 +325,10 @@ def main(cfg: DictConfig) -> Trainer:
                                          'save_weights_only',
                                          must_exist=False,
                                          default_value=False)
-    save_filename: str = pop_config(
-        cfg,
-        'save_filename',
-        must_exist=False,
-        default_value='ep{epoch}-ba{batch}-rank{rank}.pt')
+    save_filename: str = pop_config(cfg,
+                                    'save_filename',
+                                    must_exist=False,
+                                    default_value='ep{epoch}-ba{batch}-rank{rank}.pt')
     save_interval: Union[str, int] = pop_config(cfg,
                                                 'save_interval',
                                                 must_exist=False,
@@ -353,11 +351,10 @@ def main(cfg: DictConfig) -> Trainer:
                                                        'console_log_interval',
                                                        must_exist=False,
                                                        default_value='1ba')
-    device_train_microbatch_size: Union[str, int] = pop_config(
-        cfg,
-        'device_train_microbatch_size',
-        must_exist=False,
-        default_value='auto')
+    device_train_microbatch_size: Union[str, int] = pop_config(cfg,
+                                                               'device_train_microbatch_size',
+                                                               must_exist=False,
+                                                               default_value='auto')
     eval_subset_num_batches: int = pop_config(cfg,
                                               'eval_subset_num_batches',
                                               must_exist=False,
@@ -395,9 +392,9 @@ def main(cfg: DictConfig) -> Trainer:
     # Enable autoresume from model checkpoints if possible
     autoresume_default: bool = False
     if logged_cfg.get('run_name', None) is not None \
-        and save_folder is not None \
-        and not save_overwrite \
-        and not save_weights_only:
+            and save_folder is not None \
+            and not save_overwrite \
+            and not save_weights_only:
         autoresume_default = True
 
     if cfg.get('autoresume') is None and autoresume_default:
@@ -436,13 +433,16 @@ def main(cfg: DictConfig) -> Trainer:
             # Example of format string
             # 2022-06-29 11:22:26,152: rank0[822018][MainThread]: INFO: Message here
             format=
-            f'%(asctime)s: rank{dist.get_global_rank()}[%(process)d][%(threadName)s]: %(levelname)s: %(name)s: %(message)s'
+            f'%(asctime)s: rank{dist.get_global_rank()}[%(process)d][%(threadName)s]: %(levelname)s: %(name)s: %('
+            f'message)s'
         )
         logging.getLogger('llmfoundry').setLevel(python_log_level.upper())
 
     # Initialize context
     init_context = process_init_device(model_config, fsdp_config)
-    logged_cfg.update({'fsdp_config': fsdp_config}, merge=True)
+    logged_cfg.update(
+        {'fsdp_config': fsdp_config}
+        , merge=True)
 
     # Build tokenizer
     tokenizer_name = tokenizer_config['name']
@@ -465,7 +465,8 @@ def main(cfg: DictConfig) -> Trainer:
     if mosaicml_logger is None:
         if os.environ.get(MOSAICML_PLATFORM_ENV_VAR, 'false').lower(
         ) == 'true' and os.environ.get(MOSAICML_ACCESS_TOKEN_ENV_VAR):
-            # Adds mosaicml logger to composer if the run was sent from Mosaic platform, access token is set, and mosaic logger wasn't previously added
+            # Adds mosaicml logger to composer if the run was sent from Mosaic platform, access token is set,
+            # and mosaic logger wasn't previously added
             mosaicml_logger = MosaicMLLogger()
             loggers.append(mosaicml_logger)
 
@@ -506,7 +507,7 @@ def main(cfg: DictConfig) -> Trainer:
 
     # Callbacks
     callbacks: List[Callback] = [
-        build_callback(str(name), callback_cfg, om.to_container(logged_cfg))
+        build_callback(str(name), callback_cfg, OmegaConf.to_container(logged_cfg))
         for name, callback_cfg in callback_configs.items()
     ] if callback_configs else []
 
@@ -530,7 +531,7 @@ def main(cfg: DictConfig) -> Trainer:
     if mosaicml_logger is not None:
         mosaicml_logger.log_metrics({'data_validated': time.time()})
 
-    ## Evaluation
+    # Evaluation
     log.info('Building eval loader...')
     eval_icl_seq_len: int = icl_seq_len if icl_seq_len else max_seq_len
     # TODO: evaluators should not be built at all if use_async_eval is True
@@ -636,9 +637,9 @@ def main(cfg: DictConfig) -> Trainer:
 if __name__ == '__main__':
     yaml_path, args_list = sys.argv[1], sys.argv[2:]
     with open(yaml_path) as f:
-        yaml_cfg = om.load(f)
-    cli_cfg = om.from_cli(args_list)
-    cfg = om.merge(yaml_cfg, cli_cfg)
-    om.resolve(cfg)
+        yaml_cfg = OmegaConf.load(f)
+    cli_cfg = OmegaConf.from_cli(args_list)
+    cfg = OmegaConf.merge(yaml_cfg, cli_cfg)
+    OmegaConf.resolve(cfg)
     assert isinstance(cfg, DictConfig)
     main(cfg)

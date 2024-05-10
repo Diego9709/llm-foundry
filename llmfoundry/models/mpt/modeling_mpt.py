@@ -59,21 +59,21 @@ from llmfoundry.models.layers.norm import NORM_CLASS_REGISTRY
 from llmfoundry.models.mpt.configuration_mpt import MPTConfig
 
 # NOTE: All utils are imported directly even if unused so that
-# HuggingFace can detect all the needed files to copy into its modules folder.
+# HuggingFace can detect all the needed files to copy into its modules' folder.
 # Otherwise, certain modules are missing.
 # isort: off
 from llmfoundry.models.utils.adapt_tokenizer import (
-    AutoTokenizerForMOD,  # type: ignore (see note)
-    adapt_tokenizer_for_denoising,  # type: ignore (see note)
+    AutoTokenizerForMOD,  # type: ignore
+    adapt_tokenizer_for_denoising,  # type: ignore
 )
 from llmfoundry.models.utils.hf_prefixlm_converter import (
-    add_bidirectional_mask_if_missing,  # type: ignore (see note)
-    convert_hf_causal_lm_to_prefix_lm,  # type: ignore (see note)
+    add_bidirectional_mask_if_missing,  # type: ignore
+    convert_hf_causal_lm_to_prefix_lm,  # type: ignore
 )
 from llmfoundry.models.utils.meta_init_context import \
-    init_empty_weights  # type: ignore (see note)
+    init_empty_weights  # type: ignore
 from llmfoundry.models.utils.param_init_fns import (
-    generic_param_init_fn_,  # type: ignore (see note)
+    generic_param_init_fn_,  # type: ignore
     MODEL_INIT_REGISTRY,
 )
 

@@ -28,7 +28,9 @@ from composer.metrics.nlp import LanguageCrossEntropy, LanguagePerplexity
 from omegaconf import DictConfig
 from omegaconf import OmegaConf
 
-from llmfoundry.models.utils.hf_prefixlm_converter import add_bidirectional_mask_if_missing 
+from llmfoundry.models.utils.hf_prefixlm_converter import add_bidirectional_mask_if_missing
+
+
 class AlayaPreTrainedModel(PreTrainedModel):
     config_class = AlayaConfig
     base_model_prefix = 'model'
@@ -501,8 +503,8 @@ class AlayaForCausalLM(AlayaPreTrainedModel):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
-        
-        
+
+
 class ComposerMPTCausalLM(HuggingFaceModel):
 
     def __init__(
@@ -511,8 +513,8 @@ class ComposerMPTCausalLM(HuggingFaceModel):
             tokenizer: Optional[PreTrainedTokenizerBase] = None,
     ):
         resolved_om_model_config = OmegaConf.to_container(om_model_config,
-                                                   resolve=True)
-        hf_config = AlayaConfig. from_dict(resolved_om_model_config)
+                                                          resolve=True)
+        hf_config = AlayaConfig.from_dict(resolved_om_model_config)
         model = AlayaForCausalLM(hf_config)
 
         use_train_metrics = om_model_config.get('use_train_metrics', True)
@@ -544,10 +546,14 @@ class ComposerMPTCausalLM(HuggingFaceModel):
         loss_fn_config = om_model_config.get('loss_fn', 'fused_crossentropy')
         if loss_fn_config == 'fused_crossentropy':
             try:
-                # NOTE: The following is the original import statement from flash_attn library, which we have currently replaced with a copy pasted code from the same library's version 1.0.9. The reason is that using the CE loss from FA v2.3.2 results in an illegal memory access error at long sequence lengths (github issue: https://github.com/Dao-AILab/flash-attention/issues/714).
-                # from flash_attn.losses.cross_entropy import \
-                #     CrossEntropyLoss as FusedCrossEntropyLoss
-                # TODO: Once the problem with using FA v2's CE loss at longer sequence lengths is resolved (github issue: https://github.com/Dao-AILab/flash-attention/issues/714), revert back to directly importing the CE loss from FA library.
+                # NOTE: The following is the original import statement from flash_attn library, which we have
+                # currently replaced with a copy pasted code from the same library's version 1.0.9. The reason is
+                # that using the CE loss from FA v2.3.2 results in an illegal memory access error at long sequence
+                # lengths (github issue: https://github.com/Dao-AILab/flash-attention/issues/714). from
+                # flash_attn.losses.cross_entropy import \ CrossEntropyLoss as FusedCrossEntropyLoss TODO: Once the
+                #  problem with using FA v2's CE loss at longer sequence lengths is resolved (github issue:
+                #  https://github.com/Dao-AILab/flash-attention/issues/714), revert back to directly importing the CE
+                #  loss from FA library.
                 from llmfoundry.models.layers.cross_entropy_loss import \
                     CrossEntropyLoss as FusedCrossEntropyLoss
 
@@ -556,7 +562,9 @@ class ComposerMPTCausalLM(HuggingFaceModel):
                 raise ValueError(
                     'Fused Cross Entropy is not installed. Either (1) have a CUDA-compatible GPU '
                     +
-                    'and `pip install .[gpu]` if installing from source or `pip install xentropy-cuda-lib@git+https://github.com/HazyResearch/flash-attention.git@v1.0.3#subdirectory=csrc/xentropy` '
+                    'and `pip install .[gpu]` if installing from source or `pip install '
+                    'xentropy-cuda-lib@git+https://github.com/HazyResearch/flash-attention.git@v1.0.3#subdirectory'
+                    '=csrc/xentropy`'
                     +
                     'if installing from pypi, or (2) set your config model.loss_fn=torch_crossentropy.'
                 )
@@ -564,13 +572,15 @@ class ComposerMPTCausalLM(HuggingFaceModel):
             self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
         else:
             raise ValueError(
-                f'Specified loss_fn={self.loss_fn} not recognized. `loss_fn` must be one of [`fused_crossentropy`, `torch_crossentropy`].'
+                f'Specified loss_fn={self.loss_fn} not recognized. `loss_fn` must be one of [`fused_crossentropy`, '
+                f'`torch_crossentropy`].'
             )
 
     def get_targets(self, batch: Mapping) -> torch.Tensor:
         targets = torch.roll(batch['labels'], shifts=-1)
         targets[:, -1] = -100
-        return targets
+        if self:
+            return targets
 
     def forward(self, batch: MutableMapping) -> CausalLMOutputWithPast:
         if self.model.transformer.prefix_lm:
@@ -605,8 +615,4 @@ class ComposerMPTCausalLM(HuggingFaceModel):
         attn_flops_per_seq = (self.model.config.n_layers * 2 * 2 *
                               (self.model.config.d_model * (msl ** 2)))
 
-        return (params_flops_per_seq + attn_flops_per_seq) * 3 * bs   
-        
-        
-        
-        
+        return (params_flops_per_seq + attn_flops_per_seq) * 3 * bs

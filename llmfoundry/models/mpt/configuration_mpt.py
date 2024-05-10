@@ -13,12 +13,12 @@ from llmfoundry.models.layers.attention import (check_alibi_support,
 from llmfoundry.models.layers.blocks import attn_config_defaults
 
 # NOTE: All utils are imported directly even if unused so that
-# HuggingFace can detect all the needed files to copy into its modules folder.
+# HuggingFace can detect all the needed files to copy into its modules' folder.
 # Otherwise, certain modules are missing.
 # isort: off
-from llmfoundry.models.layers.fc import FC_CLASS_REGISTRY  # type: ignore (see note)
-from llmfoundry.models.layers.norm import LPLayerNorm  # type: ignore (see note)
-from llmfoundry.models.layers.ffn import FFN_CLASS_REGISTRY  # type: ignore (see note)
+from llmfoundry.models.layers.fc import FC_CLASS_REGISTRY  # type: ignore
+from llmfoundry.models.layers.norm import LPLayerNorm  # type: ignore
+from llmfoundry.models.layers.ffn import FFN_CLASS_REGISTRY  # type: ignore
 
 ffn_config_defaults: Dict = {
     'ffn_type': 'mptmlp',
@@ -40,30 +40,30 @@ class MPTConfig(PretrainedConfig):
     model_type = 'mpt'
 
     def __init__(
-        self,
-        d_model: int = 2048,
-        n_heads: int = 16,
-        n_layers: int = 24,
-        expansion_ratio: Union[int, float] = 4,
-        max_seq_len: int = 2048,
-        vocab_size: int = 50368,
-        resid_pdrop: float = 0.0,
-        emb_pdrop: float = 0.0,
-        learned_pos_emb: bool = True,
-        attn_config: Dict = attn_config_defaults,
-        ffn_config: Dict = ffn_config_defaults,
-        init_device: str = 'cpu',
-        logit_scale: Optional[Union[float, str]] = None,
-        no_bias: bool = False,
-        embedding_fraction: float = 1.0,
-        norm_type: str = 'low_precision_layernorm',
-        use_cache: bool = False,
-        init_config: Dict = init_config_defaults,
-        fc_type: str = 'torch',
-        tie_word_embeddings: bool = True,
-        use_pad_tok_in_ffn: bool = True,
-        verbose: Optional[int] = None,
-        **kwargs: Any,
+            self,
+            d_model: int = 2048,
+            n_heads: int = 16,
+            n_layers: int = 24,
+            expansion_ratio: Union[int, float] = 4,
+            max_seq_len: int = 2048,
+            vocab_size: int = 50368,
+            resid_pdrop: float = 0.0,
+            emb_pdrop: float = 0.0,
+            learned_pos_emb: bool = True,
+            attn_config=None,
+            ffn_config=None,
+            init_device: str = 'cpu',
+            logit_scale: Optional[Union[float, str]] = None,
+            no_bias: bool = False,
+            embedding_fraction: float = 1.0,
+            norm_type: str = 'low_precision_layernorm',
+            use_cache: bool = False,
+            init_config=None,
+            fc_type: str = 'torch',
+            tie_word_embeddings: bool = True,
+            use_pad_tok_in_ffn: bool = True,
+            verbose: Optional[int] = None,
+            **kwargs: Any,
     ):
         """The MPT configuration class.
 
@@ -115,7 +115,7 @@ class MPTConfig(PretrainedConfig):
             verbose (int): Deprecated.
             embedding_fraction (float): The fraction to scale the gradients of the embedding layer by.
             norm_type (str): choose type of norm to use
-            use_cache (bool): Whether or not the model should return the last key/values attentions
+            use_cache (bool): Whether the model should return the last key/values attentions
             init_config (Dict): A dictionary used to configure the model initialization:
                 init_config.name: The parameter initialization scheme to use. Options: 'default_', 'baseline_',
                     'kaiming_uniform_', 'kaiming_normal_', 'neox_init_', 'small_init_', 'xavier_uniform_', or
@@ -135,6 +135,12 @@ class MPTConfig(PretrainedConfig):
             tie_word_embeddings (bool): Whether to tie the input embedding and output layers.
             use_pad_tok_in_ffn (bool): Whether to forward the pad token in the feedforward networks.
         """
+        if init_config is None:
+            init_config = init_config_defaults
+        if ffn_config is None:
+            ffn_config = ffn_config_defaults
+        if attn_config is None:
+            attn_config = attn_config_defaults
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_layers = n_layers
@@ -171,7 +177,7 @@ class MPTConfig(PretrainedConfig):
             warnings.warn(
                 f'alibi or rope is turned on, setting `learned_pos_emb` to `False.`'
             )
-        # tie_word_embeddings is set in Huggingface's PretrainedConfig __init__
+        # tie_word_embeddings is set in Hugging-face's PretrainedConfig __init__
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
@@ -210,7 +216,7 @@ class MPTConfig(PretrainedConfig):
             raise ValueError('d_model must be divisible by n_heads')
         if any(
                 prob < 0 or prob > 1 for prob in
-            [self.attn_config['attn_pdrop'], self.resid_pdrop, self.emb_pdrop]):
+                [self.attn_config['attn_pdrop'], self.resid_pdrop, self.emb_pdrop]):
             raise ValueError(
                 "self.attn_config['attn_pdrop'], resid_pdrop, emb_pdrop are probabilities and must be between 0 and 1"
             )
@@ -218,7 +224,7 @@ class MPTConfig(PretrainedConfig):
             raise ValueError(
                 f"Unknown attn_impl={self.attn_config['attn_impl']}")
         if self.attn_config['prefix_lm'] and self.attn_config[
-                'attn_impl'] not in ['torch', 'triton']:
+            'attn_impl'] not in ['torch', 'triton']:
             raise NotImplementedError(
                 'prefix_lm only implemented with torch and triton attention.')
         if self.attn_config['alibi'] and not check_alibi_support(
@@ -228,8 +234,8 @@ class MPTConfig(PretrainedConfig):
             )
         if self.attn_config['attn_uses_sequence_id'] and not (
                 self.attn_config['attn_impl'] in ['torch', 'triton'] or
-            (self.attn_config['attn_impl'] == 'flash' and
-             is_flash_v2_installed(v2_version='v2.1.2'))):
+                (self.attn_config['attn_impl'] == 'flash' and
+                 is_flash_v2_installed(v2_version='v2.1.2'))):
             raise NotImplementedError(
                 'attn_uses_sequence_id only implemented with torch, triton, and flash (v2.1.2 or higher) attention.'
             )
@@ -241,22 +247,25 @@ class MPTConfig(PretrainedConfig):
         if self.attn_config['rope'] and (
                 self.attn_config['rope_impl']
                 == 'hf') and self.attn_config['rope_hf_config']['type'] not in [
-                    'no_scaling', 'linear', 'dynamic'
-                ]:
+            'no_scaling', 'linear', 'dynamic'
+        ]:
             raise ValueError(
                 'If using hf implementation of rope, the type should be one of "no_scaling", "linear" or "dynamic".'
             )
         if self.attn_config['rope'] and (self.attn_config['rope_impl']
                                          == 'dail'):
             if self.attn_config['rope_dail_config']['type'] not in [
-                    'original', 'xpos'
+                'original', 'xpos'
             ]:
                 raise ValueError(
                     'If using the dail implementation of rope, the type should be one of "original" or "xpos".'
                 )
             if not is_flash_v2_installed(v2_version='2.0.1'):
                 raise ImportError(
-                    'If using the dail implementation of rope, the flash_attn library v2.0.1 or higher must be installed. Please check the instructions at https://github.com/mosaicml/llm-foundry/blob/main/TUTORIAL.md#what-kinds-of-positional-embeddings-does-llm-foundry-support'
+                    'If using the dail implementation of rope, the flash_attn library v2.0.1 or higher must be '
+                    'installed. Please check the instructions at '
+                    'https://github.com/mosaicml/llm-foundry/blob/main/TUTORIAL.md#what-kinds-of-positional'
+                    '-embeddings-does-llm-foundry-support'
                 )
         if self.attn_config['sliding_window_size'] != -1 and not (
                 self.attn_config['attn_impl'] == 'flash' and
@@ -290,7 +299,8 @@ class MPTConfig(PretrainedConfig):
                     +
                     'The required version of transformer_engine also requires FlashAttention v1.0.6 is installed:\n'
                     + 'pip install flash-attn==1.0.6 --no-build-isolation \n' +
-                    'pip install git+https://github.com/NVIDIA/TransformerEngine.git@144e4888b2cdd60bd52e706d5b7a79cb9c1a7156'
+                    'pip install git+https://github.com/NVIDIA/TransformerEngine.git'
+                    '@144e4888b2cdd60bd52e706d5b7a79cb9c1a7156'
                 )
         if self.ffn_config['ffn_type'] == 'mptgeglu':
             raise ValueError(
