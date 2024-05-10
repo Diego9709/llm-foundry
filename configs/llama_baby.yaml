@@ -1,0 +1,139 @@
+# data_local: /mnt/ceph-dataset/ksyun/data_shards/phase1/data_shards
+# data_local: /mnt/ceph-dataset/kashifmunir/codes/model_subsidiary/data_shards_p2
+data_local: /mnt/ceph-dataset/ksyun/data/phase3_shards
+
+data_remote:                              # If blank, files must be present in data_local
+max_seq_len: 2048
+global_seed: 17         # org = 17
+precision: amp_bf16
+dist_timeout: 1200.00
+
+# Run Name
+run_name:                                 # If left blank, will be read from env var $RUN_NAME
+
+# Model
+model:
+  name: mpt_causal_lm
+  init_device: meta
+  d_model: 4096
+  n_heads: 32
+  n_layers: 32
+  expansion_ratio: 4
+  max_seq_len: ${max_seq_len}
+  vocab_size: 60160
+  attn_config:
+    attn_impl: triton
+    alibi: true
+
+# Tokenizer
+tokenizer:
+  name: /mnt/ceph-dataset/fengyuan/workspace/mpt_llm/my_space/my_tokenizer
+  kwargs:
+    model_max_length: ${max_seq_len}
+    trust_remote_code: true
+
+# Dataloaders
+train_loader:
+  name: text
+  dataset:
+    local: ${data_local}
+    remote: ${data_remote}
+    split: train                    # phase1: train_small; phase2: p1
+    shuffle: true
+    max_seq_len: ${max_seq_len}
+    shuffle_seed: ${global_seed}
+  drop_last: true
+  num_workers: 8
+
+eval_loader:
+  name: text
+  dataset:
+    local: ${data_local}
+    remote: ${data_remote}
+    split: val_small
+    shuffle: false
+    max_seq_len: ${max_seq_len}
+    shuffle_seed: ${global_seed}
+  drop_last: false
+  num_workers: 8
+
+# Optimization
+scheduler:
+  name: cosine_with_warmup
+  t_warmup: 100ba
+  alpha_f: 0.1                # default = 0.1
+######################################
+optimizer:
+  name: decoupled_adamw         # ====== default = decoupled_adamw
+  lr: 1.2e-4                    # default =  1.2e-4, tried: 3e-4
+  betas:
+  - 0.9
+  - 0.95
+  eps: 1.0e-08                  # ====== default 1.0e-08
+  weight_decay: 0.01             # ====== default = 0
+# ====================================
+# optimizer:
+#  name: decoupled_lionw         # ====== default = decoupled_adamw
+#  lr: 1.2e-5                    # default =  1.2e-4, tried: 3e-4
+#  betas:
+#  - 0.95
+#  - 0.98
+#  weight_decay: 1.0e-4             # ====== default = 0
+######################################
+
+algorithms:
+  gradient_clipping:
+    clipping_type: norm
+    clipping_threshold: 0.3       # 1.0
+
+max_duration: 96642ba           # (1) init set to 160000 (2) at 64250ba change to 100000.
+eval_interval: 0                # 5000ba
+eval_first: false
+eval_subset_num_batches: -1
+global_train_batch_size: 8192   # default = 1024 = Nodes * 8 * gradient acc steps * device_train_microbatch_size
+
+loggers:
+  wandb: {}
+
+
+# System
+seed: ${global_seed}
+device_eval_batch_size: 32              # default = 8
+device_train_microbatch_size: 32        # default = 8
+# device_train_microbatch_size: auto
+
+
+# FSDP
+fsdp_config:
+  sharding_strategy: FULL_SHARD       # default = FULL_SHARD, can also be: SHARD_GRAD_OP
+  mixed_precision: PURE
+  state_dict_type: full                 # ============= Added ===============
+  activation_checkpointing: true
+  activation_checkpointing_reentrant: false
+  activation_cpu_offload: false
+  limit_all_gathers: true
+  verbose: false
+
+# Logging
+progress_bar: false
+log_to_console: true
+console_log_interval: 1ba
+
+callbacks:
+  speed_monitor:
+    window_size: 10
+  lr_monitor: {}
+  memory_monitor: {}
+  runtime_estimator: {}
+
+# save_interval: 1ep
+save_interval: 250ba
+
+# Checkpoint to local filesystem or remote object store
+# save_interval: 5000ba
+# save_num_checkpoints_to_keep: 10  # Important, this cleans up checkpoints saved to DISK
+save_folder: /mnt/ceph-dataset/zhangkang/llama_ckpt/composer_models/${run_name}
+   # init lr = 1.2e-5
+load_path: "/mnt/ceph-dataset/yujj/alaya_ckpt/composer_models/alaya_1848/ep0-ba76250-rank0-RESET.pt"    # init lr = 1.2e-5 AND reset optimizer
+
+
