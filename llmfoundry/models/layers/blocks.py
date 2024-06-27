@@ -15,6 +15,8 @@ from llmfoundry.models.layers.layer_builders import (
     build_norm,
 )
 
+from llmfoundry.models.llama.configuration_llama import LlamaConfig
+from transformers.models.llama.modeling_llama import LLAMA_ATTENTION_CLASSES, LlamaMLP  
 try:
     from flash_attn.bert_padding import unpad_input, pad_input  # type: ignore # yapf: disable # isort: skip
 except:
@@ -49,6 +51,14 @@ attn_config_defaults: Dict = {
         'type': 'no_scaling',
         'factor': 1.0,
     },
+}
+
+llama_attn_config_defaults: Dict = {
+    "attn_implementation": "flash_attention_2",
+
+}
+
+llama_ffn_config_defaults: Dict = {
 }
 
 
@@ -88,8 +98,7 @@ class MPTBlock(nn.Module):
             self.norm_attn_norm = FusedNormAttentionNorm(
                 d_model=d_model,
                 n_heads=n_heads,
-                args_to_exclude_in_attn_class=self.
-                args_to_exclude_in_attn_class,
+                args_to_exclude_in_attn_class=self.args_to_exclude_in_attn_class,
                 attn_config=attn_config,
                 ffn_has_norm=ffn_has_norm,
                 fc_type=fc_type,
@@ -149,6 +158,8 @@ class MPTBlock(nn.Module):
         return {
             'attn_type',
             'alibi',
+            "alibi_type",
+            "ntk_a",
             'attn_uses_sequence_id',
             'alibi_bias_max',
             'rope',
@@ -314,3 +325,71 @@ class FusedNormAttentionNorm(nn.Module):
             m = self.norm_2(x)
 
         return x, m, attn_weights, past_key_value
+
+
+class LlamaBlock(nn.Module):
+    def __init__(self,
+                 config: LlamaConfig,
+                 layer_idx: int,
+                 norm_type: str = 'rmsnorm',
+
+                 ) -> None:
+        super().__init__()
+
+        self.hidden_size = config.hidden_size
+
+        self.self_attn = LLAMA_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
+
+        self.mlp = LlamaMLP(config)
+
+        self.input_layernorm = build_norm(
+            name=norm_type.lower(),
+            normalized_shape=config.hidden_size
+        )
+        
+        self.post_attention_layernorm = build_norm(
+            name=norm_type.lower(),
+            normalized_shape=config.hidden_size
+        )
+
+    def forward(self,
+                hidden_states: torch.Tensor,
+                attention_mask: Optional[torch.Tensor] = None,
+                position_ids: Optional[torch.LongTensor] = None,
+                past_key_value: Optional[Tuple[torch.Tensor]] = None,
+                output_attentions: Optional[bool] = False,
+                use_cache: Optional[bool] = False,
+                **kwargs: Dict[str, Any]
+                ) -> tuple[Any,...]:
+
+        residual = hidden_states
+
+        hidden_states = self.input_layernorm(hidden_states)
+
+        # Self attention
+        hidden_states, self_attn_weights, present_key_value = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            **kwargs,
+        )
+
+        hidden_states = residual + hidden_states
+
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (self_attn_weights,)
+
+        if use_cache:
+            outputs += (present_key_value,)
+
+        return outputs

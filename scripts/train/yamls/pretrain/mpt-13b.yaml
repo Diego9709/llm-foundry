@@ -1,14 +1,11 @@
-variables:
-  data_local: ./my-copy-c4
-  data_remote:  # If blank, files must be present in data_local
-  max_seq_len: 2048
-  global_seed: 17
+data_local: /mnt/ceph-dataset/zhangkang/work/long-text/long_text/corpus/datasets/sharded_64k
+data_remote:                     # If blank, files must be present in data_local
+max_seq_len: 65536
+global_seed: 17
+dist_timeout: 3000.00
 
-  # Run Name
-  run_name:  # If left blank, will be read from env var $RUN_NAME
-
-max_seq_len: ${variables.max_seq_len}
-run_name: ${variables.run_name}
+# Run Name
+run_name: # If left blank, will be read from env var $RUN_NAME
 
 # Model
 model:
@@ -18,83 +15,100 @@ model:
   n_heads: 40
   n_layers: 40
   expansion_ratio: 4
-  max_seq_len: ${variables.max_seq_len}
-  vocab_size: 50368
+  max_seq_len: ${max_seq_len}
+  vocab_size: 60160
+  embedding_fraction: 0.1
+  learned_pos_emb: false
+  norm_type: low_precision_layernorm  # rmsnorm
   attn_config:
     attn_impl: flash
+    alibi: true
+    alibi_type: ntk-alibi
+    ntk_a: 16.0
+
 
 # Tokenizer
 tokenizer:
-  name: EleutherAI/gpt-neox-20b
+  name: /mnt/ceph-dataset/yujj/alaya_ckpt/HF_models_13B/alaya13B_4488_ba430107
   kwargs:
-    model_max_length: ${variables.max_seq_len}
+    model_max_length: ${max_seq_len}
+    trust_remote_code: true
 
 # Dataloaders
 train_loader:
   name: text
   dataset:
-    local: ${variables.data_local}
-    remote: ${variables.data_remote}
+    local: ${data_local}
+    remote: ${data_remote}
     split: train
     shuffle: true
-    max_seq_len: ${variables.max_seq_len}
-    shuffle_seed: ${variables.global_seed}
+    shuffle_algo: py2s
+    shuffle_block_size: 1048576
+    max_seq_len: ${max_seq_len}
+    shuffle_seed: ${global_seed}
   drop_last: true
   num_workers: 8
 
-eval_loader:
-  name: text
-  dataset:
-    local: ${variables.data_local}
-    remote: ${variables.data_remote}
-    split: val
-    shuffle: false
-    max_seq_len: ${variables.max_seq_len}
-    shuffle_seed: ${variables.global_seed}
-  drop_last: false
-  num_workers: 8
+# eval_loader:
+#   name: text
+#   dataset:
+#     local: ${data_local}
+#     remote: ${data_remote}
+#     split: eval
+#     shuffle: false
+#     max_seq_len: ${max_seq_len}
+#     shuffle_seed: ${global_seed}
+#   drop_last: false
+#   num_workers: 8
 
 # Optimization
 scheduler:
   name: cosine_with_warmup
-  t_warmup: 100ba
+  t_warmup: 110ba
   alpha_f: 0.1
 
 optimizer:
   name: decoupled_adamw
-  lr: 1.0e-4
+  lr: 4.0e-5
   betas:
   - 0.9
   - 0.95
   eps: 1.0e-08
-  weight_decay: 0.0
+  weight_decay: 1.0e-6 # 1.0e-5
+# =========================
+
 
 algorithms:
   gradient_clipping:
     clipping_type: norm
-    clipping_threshold: 1.0
+    clipping_threshold: 0.5
 
-max_duration: 124000ba  # ~ 270B tokens
-eval_interval: 5000ba
+max_duration: 1ep 
+eval_interval: 1ep
 eval_first: false
 eval_subset_num_batches: -1
-global_train_batch_size: 1024
+global_train_batch_size: 64
 
 # System
-seed: ${variables.global_seed}
-device_eval_batch_size: 8
-device_train_microbatch_size: 8
-# device_train_microbatch_size: auto
+seed: ${global_seed}
+device_eval_batch_size: 1
+# device_train_microbatch_size: 8
+device_train_microbatch_size: 1
 precision: amp_bf16
 
 # FSDP
 fsdp_config:
   sharding_strategy: FULL_SHARD
-  mixed_precision: PURE
+  mixed_precision: 
+    param_dtype: bf16
+    reduce_dtype: fp32
+    buffer_dtype: bf16                 # PURE
+  state_dict_type: full                 # ============= Added ===============
   activation_checkpointing: true
   activation_checkpointing_reentrant: false
   activation_cpu_offload: false
   limit_all_gathers: true
+  verbose: false
 
 # Logging
 progress_bar: false
@@ -108,15 +122,14 @@ callbacks:
   memory_monitor: {}
   runtime_estimator: {}
 
-# loggers:
-#   wandb: {}
+loggers:
+  wandb: {}
+
 
 # Checkpoint to local filesystem or remote object store
-# save_interval: 5000ba
+save_interval: 100
 # save_num_checkpoints_to_keep: 1  # Important, this cleans up checkpoints saved to DISK
-# save_folder: ./{run_name}/checkpoints
-# save_folder: s3://my-bucket/my-folder/{run_name}/checkpoints
+save_folder: /mnt/ceph-dataset/zhangkang/work/long-text/long_text/corpus/ckpt/runs/${run_name}
 
 # Load from local filesystem or remote object store
-# load_path: ./gpt-13b/checkpoints/latest-rank{rank}.pt
-# load_path: s3://my-bucket/my-folder/gpt-13b/checkpoints/latest-rank{rank}.pt
+load_path: /mnt/ceph-dataset/zhangkang/work/long-text/long_text/corpus/ckpt/alaya-13b-initial-430107.ckpt

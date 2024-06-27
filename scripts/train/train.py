@@ -448,6 +448,7 @@ def main(cfg: DictConfig) -> Trainer:
         cfg=model_config,
     )
 
+
     _log_num_params(model, logged_cfg)
 
     # Optimizer

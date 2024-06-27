@@ -414,6 +414,7 @@ class GroupedQueryAttention(nn.Module):
         device: Optional[str] = None,
         bias: bool = True,
         sliding_window_size: int = -1,
+        **kwargs: Any,
     ):
         super().__init__()
 
@@ -758,6 +759,7 @@ class MultiQueryAttention(GroupedQueryAttention):
             bias=bias,
             sliding_window_size=sliding_window_size,
         )
+        
 
 
 def attn_bias_shape(
@@ -782,34 +784,21 @@ def attn_bias_shape(
         raise ValueError(f'{attn_impl=} is an invalid setting.')
 
 
-def build_attn_bias(
-    attn_impl: str,
-    attn_bias: torch.Tensor,
-    n_heads: int,
-    seq_len: int,
-    causal: bool = False,
-    alibi: bool = False,
-    alibi_bias_max: int = 8,
-) -> Optional[torch.Tensor]:
+def build_attn_bias(attn_impl: str, attn_bias: torch.Tensor, n_heads: int, seq_len: int, causal: bool=False, alibi: bool=False, alibi_bias_max: int=8, alibi_type: str = 'native') -> Optional[torch.Tensor]:
     if attn_impl == 'flash':
         return None
-    elif attn_impl == 'torch':
+    elif attn_impl in ['torch', 'triton']:
         if alibi:
-            # in place add alibi to attn bias
-            device, dtype = attn_bias.device, attn_bias.dtype
-            attn_bias = attn_bias.add(
-                build_alibi_bias(
-                    n_heads,
-                    seq_len,
-                    full=not causal,
-                    alibi_bias_max=alibi_bias_max,
-                    device=device,
-                    dtype=dtype,
-                ),
-            )
+            (device, dtype) = (attn_bias.device, attn_bias.dtype)
+            if alibi_type == 'native':
+                attn_bias = attn_bias.add(build_alibi_bias(n_heads, seq_len, full=not causal, alibi_bias_max=alibi_bias_max, device=device, dtype=dtype))
+            elif alibi_type == 'ntk-alibi':
+                attn_bias = attn_bias.add(build_ntk_alibi_bias(n_heads, seq_len, full=not causal, alibi_bias_max=alibi_bias_max, device=device, dtype=dtype))
+            elif alibi_type == 'dynamic-ntk-alibi':
+                attn_bias = build_dynamic_ntk_alibi_bias(n_heads, seq_len, full=not causal, alibi_bias_max=alibi_bias_max, device=device, dtype=dtype)
         return attn_bias
     else:
-        raise ValueError(f'{attn_impl=} is an invalid setting.')
+        raise ValueError(f'attn_impl={attn_impl!r} is an invalid setting.')
 
 
 def gen_slopes(
@@ -831,6 +820,59 @@ def gen_slopes(
     if return_1d:
         return slopes
     return slopes.view(1, n_heads, 1, 1)
+
+def gen_ntk_slopes(
+    n_heads: int,
+    a: float = 8.0,
+    device: Optional[torch.device] = None,
+    return_1d: bool = False,
+    
+) -> torch.Tensor:
+    # dynamic ntk factor according to actual sequence length
+    # default pretraining length is 4096, when a = 8.0, extended sequence length is 32768.
+    # ntk step 1: scale ratio a = inference_length / pretraining_length
+    scale = a ** (1.0 / (n_heads-1))  # ntk step 2: coefficient b, for computation convenience
+    closest_power_of_2 = 2 ** math.floor(math.log2(n_heads))
+    base = torch.tensor(
+        2 ** (-(2 ** -(math.log2(closest_power_of_2) - 3))), device=device, dtype=torch.float32
+    )
+    base /= scale  # ntk step 3: divide b to alibi base
+    powers = torch.arange(1, 1 + closest_power_of_2, device=device, dtype=torch.int32)
+    slopes = torch.pow(base, powers)
+    slopes *= scale  # ntk step 4: fix alibi bias m_h by multiplying b
+
+    if closest_power_of_2 != n_heads:  # todo: fix ntk-alibi when num_heads is not power of 2
+        extra_base = torch.tensor(
+            2 ** (-(2 ** -(math.log2(2 * closest_power_of_2) - 3))), device=device, dtype=torch.float32
+        )
+        num_remaining_heads = min(closest_power_of_2, n_heads - closest_power_of_2)
+        extra_powers = torch.arange(1, 1 + 2 * num_remaining_heads, 2, device=device, dtype=torch.int32)
+        slopes = torch.cat([slopes, torch.pow(extra_base, extra_powers)], dim=0)
+    if return_1d:
+        return slopes
+    return slopes.view(1, n_heads, 1, 1)
+
+
+def gen_dynamic_ntk_slopes(n_heads: int, seq_len: int, a0: float=2.0, train_seq_len: int=4096, return_1d: bool=False, device: Optional[torch.device]=None, dtype: Optional[torch.dtype]=None) -> torch.Tensor:
+    dynamic_seq_len = torch.tensor(seq_len, device=device, dtype=torch.float32)
+    a = a0 * dynamic_seq_len / train_seq_len
+    a = a.masked_fill(a < 1.0, 1.0)
+    scale = a ** (1.0 / (n_heads - 1))
+    closest_power_of_2 = 2 ** math.floor(math.log2(n_heads))
+    base = torch.tensor(2 ** (-2 ** (-(math.log2(closest_power_of_2) - 3))), device=device, dtype=torch.float32)
+    base = base / scale
+    powers = torch.arange(1, 1 + closest_power_of_2, device=device, dtype=torch.int32)
+    slopes = torch.pow(base, powers)
+    slopes = slopes * scale
+    if closest_power_of_2 != n_heads:
+        extra_base = torch.tensor(2 ** (-2 ** (-(math.log2(2 * closest_power_of_2) - 3))), device=device, dtype=torch.float32)
+        num_remaining_heads = min(closest_power_of_2, n_heads - closest_power_of_2)
+        extra_powers = torch.arange(1, 1 + 2 * num_remaining_heads, 2, device=device, dtype=torch.int32)
+        slopes = torch.cat([slopes, torch.pow(extra_base, extra_powers)], dim=0)
+    if return_1d:
+        return slopes
+    return slopes.view(1, n_heads, 1, 1).to(dtype)
+    
 
 
 def build_alibi_bias(
@@ -857,6 +899,60 @@ def build_alibi_bias(
     slopes = gen_slopes(n_heads, alibi_bias_max, device=device)
     alibi_bias = alibi_bias * slopes
     return alibi_bias.to(dtype=dtype)
+
+
+def build_ntk_alibi_bias(
+    n_heads: int,
+    seq_len: int,
+    a: int=8,
+    full: bool = False,
+    alibi_bias_max: int = 8,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None,
+) -> torch.Tensor:
+    slopes = gen_ntk_slopes(n_heads, a)
+    arange_tensor = torch.arange(1 - seq_len, 1, dtype=torch.int32, device=device).view(1, 1, seq_len)
+    alibi = slopes[..., None] * arange_tensor
+    return alibi.reshape(1, n_heads, 1, seq_len).to(dtype)
+
+def build_dynamic_ntk_alibi_bias(
+    num_heads: int,
+    seq_len: int,
+    full: bool = False,
+    alibi_bias_max: int = 8,
+    device: Optional[torch.device] = None,
+    dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+    """Psuedo code for Dynamic NTK-ALiBi."""
+    seq_length = seq_len
+
+    # dynamic ntk factor according to actual sequence length
+    a0 = 2.0
+    train_seq_len = 4096
+    dynamic_seq_len = torch.tensor(seq_length)  # [batch, 1]
+    a = a0 * dynamic_seq_len / train_seq_len  # [batch, 1]
+    a = a.masked_fill(a < 1.0, 1.0)  # dynamic step 1: dynamic ntk scaling factor
+
+    scale = a ** (1.0 / (num_heads-1))  # dynamic step 2: coefficient b, for computation convenience
+    closest_power_of_2 = 2 ** math.floor(math.log2(num_heads))
+    base = torch.tensor(
+        2 ** (-(2 ** -(math.log2(closest_power_of_2) - 3))), device=device, dtype=torch.float32
+    )
+    base = base / scale  # dynamic step 3: divide b to alibi base
+    powers = torch.arange(1, 1 + closest_power_of_2, device=device, dtype=torch.int32)
+    slopes = torch.pow(base, powers)
+    slopes = slopes * scale  # dynamic step 4: fix alibi bias m_h by multiplying b
+
+    if closest_power_of_2 != num_heads:  # todo: fix ntk when num_heads is not power of 2
+        extra_base = torch.tensor(
+            2 ** (-(2 ** -(math.log2(2 * closest_power_of_2) - 3))), device=device, dtype=torch.float32
+        )
+        num_remaining_heads = min(closest_power_of_2, num_heads - closest_power_of_2)
+        extra_powers = torch.arange(1, 1 + 2 * num_remaining_heads, 2, device=device, dtype=torch.int32)
+        slopes = torch.cat([slopes, torch.pow(extra_base, extra_powers)], dim=0)
+
+    arange_tensor = torch.arange(1 - seq_len, 1, dtype=torch.int32, device=device).view(1, 1, seq_len)
+    alibi = slopes[..., None] * arange_tensor
+    return alibi.reshape(1,  num_heads, 1, seq_length).to(dtype)
 
 
 attention_implementations.register('flash', func=flash_attn_fn)

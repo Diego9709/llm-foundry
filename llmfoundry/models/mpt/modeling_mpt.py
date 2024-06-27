@@ -56,6 +56,8 @@ from llmfoundry.models.layers.attention import (
     attn_bias_shape,
     build_attn_bias,
     gen_slopes,
+    gen_ntk_slopes,
+    gen_dynamic_ntk_slopes
 )
 from llmfoundry.models.layers.blocks import MPTBlock
 from llmfoundry.models.layers.custom_embedding import SharedEmbedding
@@ -333,6 +335,8 @@ class MPTModel(MPTPreTrainedModel):
         self.attn_uses_sequence_id = config.attn_config['attn_uses_sequence_id']
         self.alibi = config.attn_config['alibi']
         self.alibi_bias_max = config.attn_config['alibi_bias_max']
+        self.alibi_type = config.attn_config.get('alibi_type')
+        self.ntk_alibi_a = config.attn_config.get('ntk_a')
 
         self.learned_pos_emb = config.learned_pos_emb
 
@@ -472,14 +476,17 @@ class MPTModel(MPTPreTrainedModel):
                     device=device,
                     dtype=dtype,
                 )
+
                 self.attn_bias = build_attn_bias(
                     self.attn_impl,
                     self.attn_bias,
+                    attention_mask,
                     self.config.n_heads,
                     self.config.max_seq_len,
                     causal=self.is_causal,
                     alibi=self.alibi,
                     alibi_bias_max=self.alibi_bias_max,
+                    alibi_type=self.alibi_type
                 )
             self._attn_bias_initialized = True
 
@@ -685,12 +692,29 @@ class MPTModel(MPTPreTrainedModel):
 
         alibi_slopes = None  # alibi_slopes will only be used by flash attention for ALiBi
         if self.alibi and self.attn_impl == 'flash':
-            alibi_slopes = gen_slopes(
+            if self.alibi_type == 'native':
+                alibi_slopes = gen_slopes(
                 n_heads=self.config.n_heads,
                 alibi_bias_max=self.alibi_bias_max,
                 device=x.device,
                 return_1d=True,
             )
+            elif self.alibi_type == 'ntk-alibi':
+                alibi_slopes = gen_ntk_slopes(
+                    n_heads=self.config.n_heads,
+                    a = self.ntk_alibi_a,
+                    device=x.device,
+                    return_1d=True,
+                )
+            elif self.alibi_type == 'dynamic-alibi':
+                assert not self.training, 'Dynamic ALiBi is only supported during inference.'
+                alibi_slopes = gen_dynamic_ntk_slopes(
+                    n_heads=self.config.n_heads,
+                    seq_len=S,
+                    device=x.device,
+                    return_1d=True,
+                )
+            
 
         # initialize the past key values cache if it should be used
         presents = () if use_cache else None
@@ -1038,8 +1062,8 @@ class MPTForCausalLM(MPTPreTrainedModel):
             'attention_mask': attention_mask,
             'sequence_id': sequence_id,
             'past_key_values': past_key_values,
-            'use_cache': kwargs.get('use_cache', True),
-        })
+            'use_cache': kwargs.get('use_cache', True)
+            })
         return model_inputs
 
     @staticmethod

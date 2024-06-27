@@ -35,8 +35,7 @@ from typing import Dict, List, Union
 
 
 def multiple_choice(
-    inp: Dict[str, Union[str, List[str], int]],
-) -> Dict[str, str]:
+        inp: Dict[str, Union[str, List[str], int]]) -> Dict[str, str]:
     PROMPT_FORMAT = '{query}\nOptions:{options}\nAnswer: '
     options = ''
     assert isinstance(inp['choices'], List)
@@ -49,3 +48,48 @@ def multiple_choice(
         'prompt': PROMPT_FORMAT.format(query=query, options=options),
         'response': inp['choices'][inp['gold']],
     }
+
+
+def normal_qa(inp):
+    PROMPT_FORMAT = '### Instruction:\t\n{instruction}\n\n' 
+    PROMPT_FORMAT2 = '### Instruction:\t\n{instruction}\n{input}\n\n'
+    OUTPUT_FORMAT = '### Output:\t\n{output} </s>'
+
+    if 'input' in inp.keys() and inp['input'] != '':
+        return {
+            'prompt': PROMPT_FORMAT2.format(instruction=inp['instruction'], input=inp['input']),
+            'response': OUTPUT_FORMAT.format(output=inp['output'])
+        }
+    else:
+        return {
+            'prompt': PROMPT_FORMAT.format(instruction=inp['instruction']),
+            'response': OUTPUT_FORMAT.format(output=inp['output'])
+        }             
+        
+        
+def nothing(inp):
+    return {
+        'prompt': inp['input'],
+        'response': inp['output']
+    }       
+    
+    
+def chat(inp):
+    
+    user_template =  '### Instruction:\t\n{text}\n\n'  
+    assistant_template = '### Output:\t\n{text} </s>'
+    
+    prompt = ''
+    for i in inp['conversations'][:-1]:
+        if i['from']=='user':
+            conv = user_template.format(text=i['value'])
+        if i['from']=='assistant':
+            conv = assistant_template.format(text=i['value'])
+        prompt += conv
+        
+    response = assistant_template.format(text=inp['conversations'][-1]['value'])
+    
+    return {
+        'prompt': prompt,
+        'response': response
+    }        
